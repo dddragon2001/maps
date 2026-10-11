@@ -11,3 +11,4 @@ Facts live in the target files, never here.
 
 ## Maintenance
 - [Nightly checker](F:\Cloude_Code\maps\check_signposts.py): Validates every signpost link, section order, and unreferenced folders.
+- [Sync script](F:\Cloude_Code\maps\sync_maps.py): Two-way git sync with GitHub, run every 5 minutes on each account.
