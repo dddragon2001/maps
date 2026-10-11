@@ -6,7 +6,6 @@
       "mcp__*",
       "WebFetch",
       "Edit(~/.claude/**)",
-      "Write(~/.claude/**)",
       "Bash(rm *)", "Bash(rmdir *)", "Bash(del *)", "Bash(shred *)",
       "Bash(curl *)", "Bash(wget *)", "Bash(scp *)", "Bash(sftp *)", "Bash(ssh *)", "Bash(ftp *)", "Bash(nc *)",
       "Bash(git push *)", "Bash(gh *)", "Bash(sendmail *)", "Bash(mail *)",
