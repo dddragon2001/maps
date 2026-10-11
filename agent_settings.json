@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "defaultMode": "default",
+    "disableBypassPermissionsMode": "disable",
+    "deny": [
+      "mcp__*",
+      "WebFetch",
+      "Edit(~/.claude/**)",
+      "Write(~/.claude/**)",
+      "Bash(rm *)", "Bash(rmdir *)", "Bash(del *)", "Bash(shred *)",
+      "Bash(curl *)", "Bash(wget *)", "Bash(scp *)", "Bash(sftp *)", "Bash(ssh *)", "Bash(ftp *)", "Bash(nc *)",
+      "Bash(git push *)", "Bash(gh *)", "Bash(sendmail *)", "Bash(mail *)",
+      "Bash(powershell *)", "Bash(pwsh *)", "Bash(cmd *)",
+      "PowerShell(Remove-Item *)", "PowerShell(Clear-Content *)", "PowerShell(Clear-RecycleBin *)",
+      "PowerShell(Send-MailMessage *)", "PowerShell(Invoke-WebRequest *)", "PowerShell(Invoke-RestMethod *)",
+      "PowerShell(Start-BitsTransfer *)", "PowerShell(New-SmbShare *)", "PowerShell(Grant-SmbShareAccess *)",
+      "PowerShell(curl *)", "PowerShell(wget *)", "PowerShell(curl.exe *)", "PowerShell(scp *)", "PowerShell(ssh *)",
+      "PowerShell(git push *)", "PowerShell(gh *)", "PowerShell(net share *)",
+      "PowerShell(cmd *)", "PowerShell(cmd.exe *)", "PowerShell(powershell *)", "PowerShell(pwsh *)", "PowerShell(bash *)",
+      "PowerShell(Start-Process *)", "PowerShell(Invoke-Expression *)"
+    ]
+  }
+}
