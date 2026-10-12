@@ -24,7 +24,7 @@ LOG = os.path.join(ROOT, "logs", "sync.log")
 
 def git(*args):
     try:
-        p = subprocess.run(["git", *args], cwd=ROOT, capture_output=True,
+        p = subprocess.run(["git", *args], cwd=ROOT, capture_output=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                            text=True, encoding="utf-8", errors="replace")
     except FileNotFoundError:
         return 127, "git not found on PATH"
