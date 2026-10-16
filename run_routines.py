@@ -180,9 +180,24 @@ def run_claude(r, t):
     return data.get("result", "").strip(), turns, cost, "OK"
 
 
+def user_env(name):
+    """Process environment first, then the user's saved variables (HKCU\\Environment).
+    A window opened with Start-Process -Credential inherits the caller's environment,
+    so the saved ones are read straight from the registry."""
+    value = os.environ.get(name, "")
+    if value or os.name != "nt":
+        return value
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as k:
+            return str(winreg.QueryValueEx(k, name)[0])
+    except OSError:
+        return ""
+
+
 def send_telegram(text):
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    chat = os.environ.get("TELEGRAM_CHAT_ID", "")
+    token = user_env("TELEGRAM_BOT_TOKEN")
+    chat = user_env("TELEGRAM_CHAT_ID")
     if not token or not chat:
         return "TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set for this user"
     body = urllib.parse.urlencode({"chat_id": chat, "text": text[:4000]}).encode()
