@@ -1,0 +1,23 @@
+{
+  "caps": {
+    "max_runs_per_day": 12,
+    "max_runs_per_window": 3,
+    "window_minutes": 60
+  },
+  "routines": [
+    {
+      "name": "morning-digest",
+      "enabled": true,
+      "schedule": "daily 07:00",
+      "machine": "DESKTOP-PBILAQU/claude-agent",
+      "prompt": "digest_prompt.md",
+      "context": ["todo", "git_24h", "runs_tail"],
+      "model": "sonnet",
+      "effort": "low",
+      "allowed_tools": ["Read", "Glob", "Grep"],
+      "max_turns": 4,
+      "timeout_seconds": 300,
+      "output": "telegram"
+    }
+  ]
+}
