@@ -258,7 +258,41 @@ def main(argv):
         if due:
             do_routine(r, caps, state, t)
     save_state(state)
+    try:
+        write_routines_panel(reg)
+    except Exception as e:  # the dashboard must never break a run
+        print("panel not written: %s" % e)
     return 0
+
+
+def write_routines_panel(reg):
+    """Dashboard panel: each routine's settings and last run, today's cap use, recent runs."""
+    from panels import write_panel
+    t = now()
+    lines = []
+    if os.path.exists(RUNS_LOG):
+        with open(RUNS_LOG, encoding="utf-8") as f:
+            lines = [l.rstrip("\n").split("\t") for l in f if l.count("\t") >= 5]
+    runs = [x for x in past_runs() if not x[2].startswith("CAPPED")]
+    caps = reg.get("caps", {})
+    window = datetime.timedelta(minutes=caps.get("window_minutes", 60))
+    rows = []
+    for r in reg.get("routines", []):
+        last = [l for l in lines if l[1] == r["name"]]
+        rows.append({"name": r["name"], "enabled": r.get("enabled", True), "schedule": r.get("schedule"),
+                     "machine": r.get("machine"), "model": r.get("model"), "output": r.get("output"),
+                     "last_time": last[-1][0] if last else None,
+                     "last_status": last[-1][5] if last else "never run"})
+    cost_today = sum(float(l[4]) for l in lines if l[0][:10] == t.date().isoformat() and l[4].replace(".", "", 1).isdigit())
+    write_panel("routines", rows,
+                caps={"runs_today": sum(1 for x in runs if x[0].date() == t.date()),
+                      "max_runs_per_day": caps.get("max_runs_per_day", 12),
+                      "runs_in_window": sum(1 for x in runs if t - x[0] < window),
+                      "max_runs_per_window": caps.get("max_runs_per_window", 3),
+                      "window_minutes": caps.get("window_minutes", 60)},
+                cost_today_usd=round(cost_today, 4),
+                recent=[{"time": l[0], "name": l[1], "model": l[2], "turns": l[3], "cost": l[4], "status": l[5]}
+                        for l in lines[-15:]][::-1])
 
 
 if __name__ == "__main__":

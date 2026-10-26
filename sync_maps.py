@@ -75,5 +75,48 @@ def main():
     return 0
 
 
+def write_panels():
+    """Dashboard panels: recent sync results, and open items from todo.md."""
+    from panels import write_panel
+    import re
+    sync = []
+    if os.path.exists(LOG):
+        with open(LOG, encoding="utf-8") as f:
+            for line in f.read().splitlines()[-10:]:
+                parts = line.split(" ", 3)
+                if len(parts) >= 3:
+                    sync.append({"time": parts[0], "who": parts[1], "status": parts[2],
+                                 "detail": parts[3] if len(parts) > 3 else ""})
+    write_panel("sync", sync[::-1])
+
+    todo = os.path.join(ROOT, "todo.md")
+    if not os.path.exists(todo):
+        return
+    today = datetime.date.today()
+    section, rows = "", []
+    with open(todo, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("## "):
+                section = line[3:].strip()
+                continue
+            if section == "Open" and line.startswith("- [ ]"):
+                text = line[5:].strip()
+                m = re.search(r"due:(\d{4}-\d{2}-\d{2})", text)
+                due = m.group(1) if m else None
+                days = (datetime.date.fromisoformat(due) - today).days if due else None
+                rows.append({"kind": "open", "text": re.sub(r"\s*due:\S+", "", text), "due": due,
+                             "days_left": days})
+            elif section == "Waiting" and line.startswith("- "):
+                rows.append({"kind": "waiting", "text": line[2:].strip(), "due": None, "days_left": None})
+    rows.sort(key=lambda r: (r["kind"] != "open", r["days_left"] is None, r["days_left"] or 0))
+    write_panel("todo", rows)
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    code = main()
+    try:
+        write_panels()
+    except Exception as e:  # the dashboard must never break a sync
+        print("panels not written: %s" % e)
+    sys.exit(code)
