@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MAPS Brain</title>
+<style>
+  :root { --bg:#0b0c10; --panel:#14161c; --line:#2a2d36; --text:#e6e6e3; --muted:#8a8d96; --accent:#ff7a2f; }
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text);
+               font:12px/1.4 ui-monospace, "Cascadia Mono", Consolas, monospace; overflow:hidden; }
+  canvas { position:fixed; inset:0; width:100%; height:100%; display:block; cursor:grab; }
+  canvas.dragging { cursor:grabbing; } canvas.over { cursor:pointer; }
+  .bar { position:fixed; left:0; right:0; display:flex; gap:6px; align-items:center; padding:8px 12px; flex-wrap:wrap; pointer-events:none; }
+  .bar > * { pointer-events:auto; }
+  #top { top:0; } #chips { top:44px; } #kinds { top:74px; }
+  .tabs { display:flex; border:1px solid var(--line); border-radius:6px; overflow:hidden; }
+  button, .chip, a.btn { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:6px;
+           padding:5px 10px; font:inherit; text-transform:lowercase; cursor:pointer; text-decoration:none; }
+  .tabs button { border:0; border-right:1px solid var(--line); border-radius:0; text-transform:uppercase; letter-spacing:.04em; }
+  .tabs button:last-child { border-right:0; }
+  .tabs button.on { background:var(--accent); color:#111; }
+  button.on { border-color:var(--accent); color:var(--accent); }
+  .spacer { flex:1; }
+  .counts { color:var(--muted); margin-right:6px; }
+  .counts b { color:var(--text); font-weight:600; }
+  .chip { padding:3px 8px; display:inline-flex; gap:6px; align-items:center; }
+  .chip .dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
+  .chip .n { color:var(--muted); }
+  .chip.off { opacity:.35; }
+  .chip.solo { border-color:var(--text); }
+  #hint { position:fixed; bottom:8px; left:0; right:0; text-align:center; color:var(--muted); letter-spacing:.06em; pointer-events:none; }
+  #card { position:fixed; right:12px; top:110px; width:320px; max-width:calc(100% - 24px); background:var(--panel);
+          border:1px solid var(--line); border-radius:10px; padding:12px; display:none; }
+  #card h3 { margin:0 0 4px; font-size:14px; word-break:break-word; }
+  #card .meta { color:var(--muted); margin-bottom:8px; }
+  #card .note { margin-bottom:8px; white-space:pre-wrap; }
+  #card .path { color:var(--muted); word-break:break-all; margin-bottom:10px; }
+  #card .row { display:flex; gap:6px; }
+  #search { position:fixed; top:44px; right:12px; width:320px; max-width:calc(100% - 24px); background:var(--panel);
+            border:1px solid var(--line); border-radius:10px; padding:8px; display:none; }
+  #search input { width:100%; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:6px 8px; font:inherit; }
+  #search div.hit { padding:5px 6px; border-radius:6px; cursor:pointer; }
+  #search div.hit:hover, #search div.hit.sel { background:#222631; }
+  #search .p { color:var(--muted); font-size:11px; word-break:break-all; }
+  #empty { position:fixed; inset:0; display:none; align-items:center; justify-content:center; color:var(--muted); text-align:center; padding:16px; }
+  @media (max-width:700px) { #kinds { display:none; } .counts { display:none; } }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div class="bar" id="top">
+  <div class="tabs" id="views"></div>
+  <span class="spacer"></span>
+  <span class="counts" id="counts"></span>
+  <button id="bNames">names</button>
+  <button id="bMotion" class="on">motion</button>
+  <button id="bSearch">search</button>
+  <button id="bFit">fit</button>
+  <button id="bFull">full</button>
+  <a class="btn" href="/panels">panels</a>
+</div>
+<div class="bar" id="chips"></div>
+<div class="bar" id="kinds"></div>
+<div id="hint">dot = file · diamond = skill · ring = routine · click = card · click a chip to isolate · wheel zooms · drag pans</div>
+<div id="card"><h3></h3><div class="meta"></div><div class="note"></div><div class="path"></div>
+  <div class="row"><button id="cCopy">copy path</button><button id="cFly">fly to</button><button id="cClose">close</button></div></div>
+<div id="search"><input id="q" placeholder="search label, path or note" autocomplete="off"><div id="hits"></div></div>
+<div id="empty"></div>
+<script>
+// ---- Every speed and count lives here. -------------------------------------------------
+const CONFIG = {
+  refreshMs: 5 * 60 * 1000,   // re-read brain.json
+  lerp: 0.12,                 // how fast nodes glide to a new layout (0..1 per frame)
+  orbitSpeed: 0.00012,        // 3D orbit rotation, radians per ms
+  orbitTilt: 0.42,            // 3D orbit tilt, radians
+  orbitRadius: 300,
+  orbitJitter: 0.55,          // 3D orbit: how loose each area cluster is on the sphere
+  ringGap: 70,                // rings view: distance between rings
+  laneGap: 55,                // timeline view: distance between area lanes
+  areaRadius: 400,            // areas view: distance of each cluster from the centre
+  clusterSpread: 12,           // areas view: spacing inside a cluster
+  forceIterationsPerFrame: 12,
+  forceTotalIterations: 240,
+  repel: 1200, spring: 0.06, springLength: 34, gravity: 0.012,
+  nodeBase: 2.2, nodeScale: 0.9, nodeMax: 6.5,
+  labelZoom: 1.8,             // show labels of bigger nodes past this zoom even with names off
+  flyMs: 700, maxZoom: 8, minZoom: 0.15,
+};
+const VIEWS = ["rings", "circle", "areas", "links", "timeline", "3d orbit"];
+const LAYERS = ["core", "memory", "skills", "routines", "apps", "runs"];
+const KINDS = ["skill", "note", "memory", "project", "routine", "app", "run"];
+const PALETTE = ["#4f8ff7", "#f2b33d", "#2fbf9b", "#a77bf3", "#f06292", "#9ccc47", "#ff8a65", "#4dd0e1"];
+const SYSTEM_COLOR = "#9aa0a6";
+
+// ---- State -----------------------------------------------------------------------------
+const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+let W = 0, H = 0, DPR = 1;
+let nodes = [], links = [], byId = new Map(), areaColor = {}, areaList = [], counts = {};
+let view = "areas", names = false, motion = true, hover = null, selected = null;
+let soloArea = null, soloKind = null;
+let cam = {x: 0, y: 0, k: 1}, fly = null, forceLeft = 0, orbitAngle = 0, lastT = performance.now();
+let drag = null;
+
+// ---- Data ------------------------------------------------------------------------------
+async function loadData() {
+  let d;
+  try { d = await (await fetch("/data/brain.json", {cache: "no-store"})).json(); }
+  catch (e) { return showEmpty("Could not read /data/brain.json."); }
+  if (d.missing || !d.rows) return showEmpty("No brain yet. It is written after the next sync, within 5 minutes.");
+  document.getElementById("empty").style.display = "none";
+  const old = byId;
+  nodes = d.rows; byId = new Map(nodes.map(n => [n.id, n]));
+  links = d.links.map(l => ({s: byId.get(l.s), t: byId.get(l.t)})).filter(l => l.s && l.t);
+  nodes.forEach(n => {
+    const o = old.get(n.id);
+    n.x = o ? o.x : (Math.random() - .5) * 50; n.y = o ? o.y : (Math.random() - .5) * 50;
+    n.tx = n.x; n.ty = n.y; n.alpha = 1; n.z = 1;
+    n.r = Math.min(CONFIG.nodeMax, CONFIG.nodeBase + CONFIG.nodeScale * Math.sqrt(n.deg || 0));
+    if (n.kind === "area") n.r = 10; if (n.kind === "root") n.r = 14; if (n.kind === "run") n.r = 1.8;
+    n.nb = new Set();
+  });
+  links.forEach(l => { l.s.nb.add(l.t); l.t.nb.add(l.s); });
+  areaList = [...new Set(nodes.map(n => n.area))].sort((a, b) => (a === "system") - (b === "system") || a.localeCompare(b));
+  areaColor = {}; let i = 0;
+  areaList.forEach(a => areaColor[a] = a === "system" ? SYSTEM_COLOR : PALETTE[i++ % PALETTE.length]);
+  counts = d.counts || {};
+  const stale = (Date.now() - new Date(d.generated).getTime()) / 60000 > d.stale_minutes;
+  document.getElementById("counts").innerHTML =
+    `<b>${counts.files ?? 0}</b> files · <b>${counts.links ?? 0}</b> links · <b>${counts.runs ?? 0}</b> runs` +
+    ` · ${stale ? "<b style='color:#e3b341'>stale</b> " : ""}${d.generated.replace("T", " ").slice(0, 16)}`;
+  buildChips(); layout(); if (!old.size) setTimeout(fit, 400);
+}
+function showEmpty(msg) { const e = document.getElementById("empty"); e.textContent = msg; e.style.display = "flex"; }
+
+// ---- Layouts: each sets n.tx / n.ty for the SAME nodes ------------------------------------
+function areaOrder(n) { return areaList.indexOf(n.area); }
+function sorted(list) { return list.slice().sort((a, b) => areaOrder(a) - areaOrder(b) || a.kind.localeCompare(b.kind) || a.label.localeCompare(b.label)); }
+function onCircle(list, r, start = -Math.PI / 2) {
+  list.forEach((n, i) => { const a = start + i / Math.max(1, list.length) * Math.PI * 2; n.tx = Math.cos(a) * r; n.ty = Math.sin(a) * r; });
+}
+function layout() {
+  forceLeft = 0;
+  const root = byId.get("root");
+  if (view === "rings") {
+    LAYERS.forEach((layer, li) => {
+      const ring = sorted(nodes.filter(n => n.layer === layer && n.kind !== "root"));
+      onCircle(ring, ringRadius(li, ring.length));
+    });
+  } else if (view === "circle") {
+    const R0 = Math.max(220, nodes.length * 0.9);
+    onCircle(sorted(nodes.filter(n => n.kind !== "root" && n.kind !== "area")), R0);
+    nodes.filter(n => n.kind === "area").forEach(h => { const m = nodes.filter(n => n.area === h.area && n !== h);
+      const a = Math.atan2(m.reduce((s, n) => s + n.ty, 0), m.reduce((s, n) => s + n.tx, 0)); h.tx = Math.cos(a) * R0 * .6; h.ty = Math.sin(a) * R0 * .6; });
+  } else if (view === "areas") {
+    areaList.forEach((area, ai) => {
+      const a = -Math.PI / 2 + ai / areaList.length * Math.PI * 2;
+      const cx = Math.cos(a) * CONFIG.areaRadius, cy = Math.sin(a) * CONFIG.areaRadius;
+      const members = sorted(nodes.filter(n => n.area === area && n.kind !== "root"));
+      const hub = members.find(n => n.kind === "area");
+      let i = 1;
+      members.forEach(n => {
+        if (n === hub) { n.tx = cx; n.ty = cy; return; }
+        const r = CONFIG.clusterSpread * Math.sqrt(i + 3), t = i * 2.39996; i++;
+        n.tx = cx + Math.cos(t) * r; n.ty = cy + Math.sin(t) * r;
+      });
+    });
+  } else if (view === "links") {
+    view = "areas"; layout(); view = "links";
+    nodes.forEach(n => { n.tx += (hash(n.id) % 40) - 20; n.ty += ((hash(n.id) >> 8) % 40) - 20; });
+    forceLeft = CONFIG.forceTotalIterations;
+  } else if (view === "timeline") {
+    const runs = nodes.filter(n => n.kind === "run" && n.changed);
+    const files = nodes.filter(n => !["run", "root", "area"].includes(n.kind) && n.changed);
+    const times = [...runs, ...files].map(n => Date.parse(n.changed)).filter(x => !isNaN(x));
+    const t0 = Math.min(...times), t1 = Math.max(...times), span = Math.max(1, t1 - t0), w = 900;
+    const xOf = n => -w / 2 + (Date.parse(n.changed) - t0) / span * w;
+    const perDay = {};
+    runs.forEach(n => { const day = n.changed.slice(0, 10); perDay[day] = (perDay[day] || 0) + 1; n.tx = xOf(n); n.ty = -40 - perDay[day] * 7; });
+    files.forEach(n => { n.tx = xOf(n); n.ty = 50 + areaOrder(n) * CONFIG.laneGap + (hash(n.id) % 22); });
+    nodes.filter(n => n.kind === "area").forEach(n => { n.tx = -w / 2 - 200; n.ty = 60 + areaOrder(n) * CONFIG.laneGap; });
+    nodes.filter(n => !n.changed && !["root", "area"].includes(n.kind)).forEach(n => { n.tx = w / 2 + 60; n.ty = 50 + areaOrder(n) * CONFIG.laneGap; });
+    if (root) { root.tx = -w / 2 - 200; root.ty = -60; }
+    timelineRange = isFinite(t0) ? [t0, t1, w] : null;
+  } else if (view === "3d orbit") {
+    const shell = sorted(nodes.filter(n => !["root", "area", "routine", "app", "run"].includes(n.kind)));
+    // each area gets a wedge of the sphere sized by its node count, so clusters sit side by side
+    let lon0 = 0;
+    areaList.forEach(area => {
+      const m = shell.filter(n => n.area === area), width = m.length / Math.max(1, shell.length) * Math.PI * 2;
+      m.forEach((n, j) => { const lat = Math.acos(1 - 2 * ((j * 0.618034 + 0.31) % 1)), lon = lon0 + width * (j + .5) / m.length, rr = 0.85 + 0.15 * (hash(n.id) % 100) / 100;
+        n.o = [Math.sin(lat) * Math.cos(lon) * rr, Math.cos(lat) * rr, Math.sin(lat) * Math.sin(lon) * rr]; });
+      const hub = nodes.find(n => n.kind === "area" && n.area === area), mid = lon0 + width / 2;
+      if (hub) hub.o = [Math.cos(mid) * 0.75, 0, Math.sin(mid) * 0.75];
+      lon0 += width;
+    });
+    const ring = sorted(nodes.filter(n => n.kind === "routine" || n.kind === "app"));
+    ring.forEach((n, i) => { const a = i / ring.length * Math.PI * 2; n.o = [Math.cos(a) * 1.3, 0, Math.sin(a) * 1.3]; });
+    nodes.filter(n => n.kind === "run").forEach(n => { const p = [...n.nb].find(m => m.kind === "routine"), o = p && p.o ? p.o : [1.3, 0, 0], h = hash(n.id);
+      n.o = [o[0] * 0.92 + ((h % 100) - 50) / 900, ((h >> 8) % 100 - 50) / 700, o[2] * 0.92 + (((h >> 16) % 100) - 50) / 900]; });
+    nodes.filter(n => n.kind === "area" && !n.o).forEach(h => h.o = [0, 0.75, 0]);
+    const root3 = byId.get("root"); if (root3) root3.o = [0, 0, 0];
+  }
+  if (root && view !== "timeline") { root.tx = 0; root.ty = 0; }
+}
+let timelineRange = null;
+function ringRadius(li, count) { return CONFIG.ringGap * (li + 2) + Math.max(0, count - 60) * 0.6; }
+function fib(i, n) { const y = 1 - (i + .5) / n * 2, r = Math.sqrt(1 - y * y), t = i * 2.39996; return [Math.cos(t) * r, y, Math.sin(t) * r]; }
+function hash(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+
+function forceStep() {
+  const n = nodes.length;
+  for (let it = 0; it < CONFIG.forceIterationsPerFrame && forceLeft > 0; it++, forceLeft--) {
+    for (let i = 0; i < n; i++) {
+      const a = nodes[i]; let fx = -a.tx * CONFIG.gravity, fy = -a.ty * CONFIG.gravity;
+      for (let j = 0; j < n; j++) {
+        if (i === j) continue; const b = nodes[j];
+        let dx = a.tx - b.tx, dy = a.ty - b.ty, d2 = dx * dx + dy * dy + 0.01;
+        if (d2 > 90000) continue; const f = CONFIG.repel / d2, d = Math.sqrt(d2); fx += dx / d * f; fy += dy / d * f;
+      }
+      a.fx = fx; a.fy = fy;
+    }
+    links.forEach(l => {
+      const dx = l.t.tx - l.s.tx, dy = l.t.ty - l.s.ty, d = Math.hypot(dx, dy) || 1, f = (d - CONFIG.springLength) * CONFIG.spring;
+      l.s.fx += dx / d * f; l.s.fy += dy / d * f; l.t.fx -= dx / d * f; l.t.fy -= dy / d * f;
+    });
+    const cool = 0.2 + 0.8 * forceLeft / CONFIG.forceTotalIterations;
+    nodes.forEach(a => { if (a.kind === "root") { a.tx = 0; a.ty = 0; return; }
+      a.tx += Math.max(-8, Math.min(8, a.fx)) * cool; a.ty += Math.max(-8, Math.min(8, a.fy)) * cool; });
+  }
+}
+function orbitStep(dt) {
+  if (motion) orbitAngle += CONFIG.orbitSpeed * dt;
+  const ca = Math.cos(orbitAngle), sa = Math.sin(orbitAngle), ct = Math.cos(CONFIG.orbitTilt), st = Math.sin(CONFIG.orbitTilt), R = CONFIG.orbitRadius;
+  nodes.forEach(n => {
+    const [x, y, z] = n.o || [0, 0, 0];
+    const x1 = x * ca + z * sa, z1 = -x * sa + z * ca, y2 = y * ct - z1 * st, z2 = y * st + z1 * ct;
+    const p = 3 / (3 + z2); n.tx = x1 * R * p; n.ty = y2 * R * p; n.z = p;
+  });
+}
+
+// ---- Drawing ---------------------------------------------------------------------------
+function visible(n) { return (!soloArea || n.area === soloArea || n.kind === "root") && (!soloKind || n.kind === soloKind || n.kind === "root" || n.kind === "area"); }
+function toScreen(x, y) { return [(x - cam.x) * cam.k + W / 2, (y - cam.y) * cam.k + H / 2]; }
+function color(n) { return n.kind === "root" ? "#ff7a2f" : areaColor[n.area] || SYSTEM_COLOR; }
+
+function shape(n, x, y, r) {
+  ctx.beginPath();
+  if (n.kind === "root" || n.kind === "app") { for (let i = 0; i < 6; i++) { const a = Math.PI / 6 + i * Math.PI / 3; ctx.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r); } ctx.closePath(); }
+  else if (n.kind === "skill") { ctx.moveTo(x, y - r * 1.3); ctx.lineTo(x + r * 1.3, y); ctx.lineTo(x, y + r * 1.3); ctx.lineTo(x - r * 1.3, y); ctx.closePath(); }
+  else if (n.kind === "project") { ctx.rect(x - r, y - r, r * 2, r * 2); }
+  else ctx.arc(x, y, r, 0, Math.PI * 2);
+}
+
+function draw() {
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  const g = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * .7);
+  g.addColorStop(0, "#161821"); g.addColorStop(1, "#0b0c10"); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  const focus = hover || selected;
+  if (view === "rings") LAYERS.forEach((layer, li) => ring(0, 0, ringRadius(li, nodes.filter(n => n.layer === layer && n.kind !== "root").length)));
+  if (view === "3d orbit") orbitGuides();
+  if (view === "timeline") timelineAxis();
+
+  // links
+  ctx.lineWidth = 1;
+  links.forEach(l => {
+    if (!visible(l.s) || !visible(l.t)) return;
+    const on = focus && (l.s === focus || l.t === focus);
+    ctx.strokeStyle = on ? "rgba(255,255,255,.65)" : (focus ? "rgba(255,255,255,.03)" : "rgba(160,170,190,.09)");
+    const [x1, y1] = toScreen(l.s.x, l.s.y), [x2, y2] = toScreen(l.t.x, l.t.y);
+    ctx.beginPath(); ctx.moveTo(x1, y1);
+    if (view === "circle") { const [cx, cy] = toScreen(0, 0); ctx.quadraticCurveTo(cx, cy, x2, y2); } else ctx.lineTo(x2, y2);
+    ctx.stroke();
+  });
+
+  // nodes, far ones first in 3D
+  const order = view === "3d orbit" ? nodes.slice().sort((a, b) => a.z - b.z) : nodes;
+  ctx.textBaseline = "middle";
+  order.forEach(n => {
+    const vis = visible(n);
+    let a = vis ? 1 : 0.05;
+    if (focus && vis) a = (n === focus || focus.nb.has(n)) ? 1 : 0.15;
+    if (view === "3d orbit") a *= Math.max(.25, Math.min(1, (n.z - .7) * 2.2));
+    const [x, y] = toScreen(n.x, n.y), r = n.r * Math.sqrt(cam.k) * (view === "3d orbit" ? n.z : 1);
+    if (x < -50 || y < -50 || x > W + 50 || y > H + 50) return;
+    ctx.globalAlpha = a; const c = color(n);
+    shape(n, x, y, r);
+    if (n.kind === "routine") { ctx.strokeStyle = c; ctx.lineWidth = 1.6; ctx.stroke(); }
+    else if (n.kind === "root") { ctx.fillStyle = "#1a1310"; ctx.fill(); ctx.strokeStyle = c; ctx.lineWidth = 2.5; ctx.stroke(); }
+    else if (n.kind === "app") { ctx.strokeStyle = c; ctx.lineWidth = 1.4; ctx.stroke(); }
+    else if (n.kind === "area") { ctx.fillStyle = c; ctx.globalAlpha = a * .25; ctx.beginPath(); ctx.arc(x, y, r * 1.8, 0, 7); ctx.fill(); ctx.globalAlpha = a; shape(n, x, y, r); ctx.fill();
+      ctx.fillStyle = "#0b0c10"; ctx.font = "bold 11px ui-monospace, Consolas, monospace"; ctx.textAlign = "center"; ctx.fillText(n.label[0].toUpperCase(), x, y + 1); }
+    else { ctx.fillStyle = c; ctx.fill(); }
+    const big = n.kind === "root" || n.kind === "area";
+    if (vis && (big || names || n === focus || (cam.k > CONFIG.labelZoom && n.r > 3.5))) {
+      ctx.textAlign = big && n.kind === "root" ? "center" : "left";
+      ctx.font = (big ? "600 12px" : "11px") + " ui-monospace, Consolas, monospace";
+      const txt = n.kind === "area" ? n.label.toUpperCase() : n.label;
+      if (n.kind === "root") { const w = ctx.measureText(txt).width + 10; ctx.fillStyle = "#0b0c10"; ctx.fillRect(x - w / 2, y + r + 6, w, 16); ctx.fillStyle = "#fff"; ctx.fillText(txt, x, y + r + 14); }
+      else { ctx.fillStyle = big ? "#fff" : "#c9ccd3"; ctx.fillText(txt.length > 42 ? txt.slice(0, 40) + "…" : txt, x + r + 6, y);
+        if (n.kind === "area") { ctx.fillStyle = "#8a8d96"; ctx.font = "11px ui-monospace, Consolas, monospace"; ctx.fillText(String(nodes.filter(m => m.area === n.area && m.kind !== "area").length), x + r + 6, y + 14); } }
+    }
+  });
+  ctx.globalAlpha = 1;
+}
+function ring(x, y, r) { const [cx, cy] = toScreen(x, y); ctx.strokeStyle = "rgba(255,255,255,.05)"; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(cx, cy, r * cam.k, 0, 7); ctx.stroke(); }
+function orbitGuides() {
+  const R = CONFIG.orbitRadius, ct = Math.cos(CONFIG.orbitTilt), st = Math.sin(CONFIG.orbitTilt);
+  ctx.strokeStyle = "rgba(255,255,255,.07)"; ctx.lineWidth = 1;
+  [[1.3, 0], [1, 0], [1, 1]].forEach(([s, meridian]) => {
+    ctx.beginPath();
+    for (let i = 0; i <= 96; i++) {
+      const a = i / 96 * Math.PI * 2; let x, y, z;
+      if (meridian) { x = 0; y = Math.cos(a) * s; z = Math.sin(a) * s; const ca = Math.cos(orbitAngle), sa = Math.sin(orbitAngle); [x, z] = [x * ca + z * sa, -x * sa + z * ca]; }
+      else { x = Math.cos(a) * s; y = 0; z = Math.sin(a) * s; }
+      const y2 = y * ct - z * st, z2 = y * st + z * ct, p = 3 / (3 + z2);
+      const [sx, sy] = toScreen(x * R * p, y2 * R * p); i ? ctx.lineTo(sx, sy) : ctx.moveTo(sx, sy);
+    }
+    ctx.stroke();
+  });
+}
+function timelineAxis() {
+  if (!timelineRange) return; const [t0, t1, w] = timelineRange;
+  const [lx, ly] = toScreen(-w / 2, 0), [rx] = toScreen(w / 2, 0);
+  ctx.strokeStyle = "rgba(255,255,255,.12)"; ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(rx, ly); ctx.stroke();
+  ctx.fillStyle = "#8a8d96"; ctx.font = "11px ui-monospace, Consolas, monospace"; ctx.textAlign = "center";
+  for (let i = 0; i <= 6; i++) { const t = t0 + (t1 - t0) * i / 6, [x] = toScreen(-w / 2 + w * i / 6, 0); ctx.fillText(new Date(t).toISOString().slice(0, 10), x, ly + 14); }
+  ctx.textAlign = "left"; const [tx, ty] = toScreen(-w / 2, -30); ctx.fillText("routine runs by day ↑", tx, ty); const [bx, by] = toScreen(-w / 2, 26); ctx.fillText("files by last change ↓", bx, by);
+}
+
+// ---- Loop ------------------------------------------------------------------------------
+function frame(t) {
+  const dt = Math.min(64, t - lastT); lastT = t;
+  if (view === "3d orbit") orbitStep(dt); else if (forceLeft > 0) forceStep();
+  nodes.forEach(n => { n.x += (n.tx - n.x) * CONFIG.lerp; n.y += (n.ty - n.y) * CONFIG.lerp; if (view !== "3d orbit") n.z += (1 - n.z) * CONFIG.lerp; });
+  if (fly) { const p = Math.min(1, (t - fly.t0) / CONFIG.flyMs), e = p < .5 ? 2 * p * p : 1 - (-2 * p + 2) ** 2 / 2;
+    cam.x = fly.a.x + (fly.b.x - fly.a.x) * e; cam.y = fly.a.y + (fly.b.y - fly.a.y) * e; cam.k = fly.a.k + (fly.b.k - fly.a.k) * e; if (p >= 1) fly = null; }
+  draw(); requestAnimationFrame(frame);
+}
+function resize() { DPR = window.devicePixelRatio || 1; W = innerWidth; H = innerHeight; cv.width = W * DPR; cv.height = H * DPR; }
+
+// ---- Controls --------------------------------------------------------------------------
+function flyTo(b) { fly = {t0: performance.now(), a: {...cam}, b}; }
+function fit() {
+  const vis = nodes.filter(visible); if (!vis.length) return;
+  const xs = vis.map(n => n.tx), ys = vis.map(n => n.ty);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const k = Math.max(CONFIG.minZoom, Math.min(2.5, Math.min((W - 80) / (x1 - x0 + 60), (H - 160) / (y1 - y0 + 60))));
+  flyTo({x: (x0 + x1) / 2, y: (y0 + y1) / 2 - 20 / k, k});
+}
+function setView(v) { view = v; history.replaceState(null, "", "#" + v.replace(" ", "-")); document.querySelectorAll("#views button").forEach(b => b.classList.toggle("on", b.dataset.v === v)); layout(); setTimeout(fit, v === "links" ? 900 : 250); }
+function buildChips() {
+  const chips = document.getElementById("chips"); chips.replaceChildren();
+  const all = chip("all areas", null, nodes.length, () => { soloArea = null; buildChips(); }); all.classList.toggle("solo", !soloArea); chips.append(all);
+  areaList.forEach(a => { const c = chip(a.toLowerCase(), areaColor[a], nodes.filter(n => n.area === a).length, () => { soloArea = soloArea === a ? null : a; buildChips(); });
+    c.classList.toggle("off", !!soloArea && soloArea !== a); c.classList.toggle("solo", soloArea === a); chips.append(c); });
+  const kinds = document.getElementById("kinds"); kinds.replaceChildren();
+  KINDS.filter(k => nodes.some(n => n.kind === k)).forEach(k => { const c = chip(k, null, nodes.filter(n => n.kind === k).length, () => { soloKind = soloKind === k ? null : k; buildChips(); });
+    c.classList.toggle("off", !!soloKind && soloKind !== k); c.classList.toggle("solo", soloKind === k); kinds.append(c); });
+}
+function chip(label, col, n, onclick) {
+  const b = document.createElement("button"); b.className = "chip";
+  if (col) { const d = document.createElement("span"); d.className = "dot"; d.style.background = col; b.append(d); }
+  b.append(label); const s = document.createElement("span"); s.className = "n"; s.textContent = n; b.append(s); b.onclick = onclick; return b;
+}
+function hit(mx, my) {
+  let best = null, bd = 1e9;
+  nodes.forEach(n => { if (!visible(n)) return; const [x, y] = toScreen(n.x, n.y), r = n.r * Math.sqrt(cam.k) + 4, d = Math.hypot(x - mx, y - my); if (d < r && d < bd) { bd = d; best = n; } });
+  return best;
+}
+function openCard(n) {
+  selected = n; const c = document.getElementById("card"); c.style.display = "block";
+  c.querySelector("h3").textContent = n.label;
+  c.querySelector(".meta").textContent = `${n.kind} · ${n.area} · ${n.deg} links${n.changed ? " · " + n.changed.replace("T", " ").slice(0, 16) : ""}`;
+  c.querySelector(".note").textContent = n.note || "";
+  c.querySelector(".path").textContent = n.path || "";
+  document.getElementById("cCopy").style.display = n.path ? "" : "none";
+}
+function closeCard() { selected = null; document.getElementById("card").style.display = "none"; }
+
+document.getElementById("views").append(...VIEWS.map(v => { const b = document.createElement("button"); b.textContent = v; b.dataset.v = v; b.onclick = () => setView(v); return b; }));
+document.getElementById("bNames").onclick = e => { names = !names; e.target.classList.toggle("on", names); };
+document.getElementById("bMotion").onclick = e => { motion = !motion; e.target.classList.toggle("on", motion); };
+document.getElementById("bFit").onclick = fit;
+document.getElementById("bFull").onclick = () => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+document.getElementById("cClose").onclick = closeCard;
+document.getElementById("cFly").onclick = () => selected && flyTo({x: selected.tx, y: selected.ty, k: Math.max(cam.k, 2.4)});
+document.getElementById("cCopy").onclick = e => { if (selected) navigator.clipboard.writeText(selected.path).then(() => { e.target.textContent = "copied"; setTimeout(() => e.target.textContent = "copy path", 1200); }); };
+
+const search = document.getElementById("search"), q = document.getElementById("q"), hits = document.getElementById("hits");
+let hitList = [], hitSel = 0;
+document.getElementById("bSearch").onclick = () => { const on = search.style.display !== "block"; search.style.display = on ? "block" : "none"; if (on) { q.value = ""; renderHits(); q.focus(); } };
+q.oninput = () => { hitSel = 0; renderHits(); };
+q.onkeydown = e => {
+  if (e.key === "ArrowDown") { hitSel = Math.min(hitList.length - 1, hitSel + 1); renderHits(); e.preventDefault(); }
+  else if (e.key === "ArrowUp") { hitSel = Math.max(0, hitSel - 1); renderHits(); e.preventDefault(); }
+  else if (e.key === "Enter" && hitList[hitSel]) pick(hitList[hitSel]);
+  else if (e.key === "Escape") search.style.display = "none";
+};
+function renderHits() {
+  const s = q.value.trim().toLowerCase(); hits.replaceChildren();
+  hitList = s ? nodes.filter(n => (n.label + " " + n.path + " " + n.note).toLowerCase().includes(s)).slice(0, 8) : [];
+  hitList.forEach((n, i) => { const d = document.createElement("div"); d.className = "hit" + (i === hitSel ? " sel" : "");
+    d.textContent = n.label; const p = document.createElement("div"); p.className = "p"; p.textContent = n.path || n.note; d.append(p); d.onclick = () => pick(n); hits.append(d); });
+}
+function pick(n) { search.style.display = "none"; soloArea = null; soloKind = null; buildChips(); openCard(n); flyTo({x: n.tx, y: n.ty, k: Math.max(cam.k, 2.4)}); }
+
+cv.addEventListener("mousedown", e => { drag = {x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y, moved: false}; cv.classList.add("dragging"); });
+addEventListener("mouseup", e => {
+  cv.classList.remove("dragging");
+  if (drag && !drag.moved && e.target === cv) { const n = hit(e.clientX, e.clientY); n ? openCard(n) : closeCard(); }
+  drag = null;
+});
+addEventListener("mousemove", e => {
+  if (drag) { const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+    cam.x = drag.cx - dx / cam.k; cam.y = drag.cy - dy / cam.k; fly = null; return; }
+  if (e.target !== cv) { hover = null; return; }
+  hover = hit(e.clientX, e.clientY); cv.classList.toggle("over", !!hover);
+});
+cv.addEventListener("wheel", e => {
+  e.preventDefault(); fly = null;
+  const k = Math.max(CONFIG.minZoom, Math.min(CONFIG.maxZoom, cam.k * Math.exp(-e.deltaY * 0.0015)));
+  const wx = (e.clientX - W / 2) / cam.k + cam.x, wy = (e.clientY - H / 2) / cam.k + cam.y;
+  cam.k = k; cam.x = wx - (e.clientX - W / 2) / k; cam.y = wy - (e.clientY - H / 2) / k;
+}, {passive: false});
+addEventListener("keydown", e => { if (e.key === "/" && document.activeElement !== q) { e.preventDefault(); document.getElementById("bSearch").click(); } if (e.key === "Escape") closeCard(); });
+addEventListener("resize", resize);
+
+const startView = decodeURIComponent(location.hash.slice(1)).replace("-", " ");
+resize(); setView(VIEWS.includes(startView) ? startView : "areas"); loadData(); setInterval(loadData, CONFIG.refreshMs); requestAnimationFrame(frame);
+</script>
+</body>
+</html>

@@ -292,7 +292,9 @@ def write_routines_panel(reg):
                       "window_minutes": caps.get("window_minutes", 60)},
                 cost_today_usd=round(cost_today, 4),
                 recent=[{"time": l[0], "name": l[1], "model": l[2], "turns": l[3], "cost": l[4], "status": l[5]}
-                        for l in lines[-15:]][::-1])
+                        for l in lines[-15:]][::-1],
+                runs=[{"time": l[0], "name": l[1], "model": l[2], "turns": l[3], "cost": l[4], "status": l[5]}
+                      for l in lines[-300:]])
 
 
 if __name__ == "__main__":

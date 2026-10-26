@@ -112,6 +112,9 @@ def write_panels():
     rows.sort(key=lambda r: (r["kind"] != "open", r["days_left"] is None, r["days_left"] or 0))
     write_panel("todo", rows)
 
+    import build_brain
+    build_brain.main()
+
 
 if __name__ == "__main__":
     code = main()

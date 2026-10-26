@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """MAPS dashboard server (standard library only).
 
-Serves one page and the panel files, read-only, on this PC only:
-  GET /                    dashboard.html (next to this script)
+Serves two pages and the panel files, read-only, on this PC only:
+  GET /                    brain.html, the graph of the whole map
+  GET /panels              dashboard.html, the due / routines / sync panels
   GET /data/<panel>.json   one of PANELS, read from panels.DATA_DIR
+There is deliberately no route that returns a file's text: every account on
+this PC can reach 127.0.0.1, so such a route would let claude-agent read F:.
 Every other path is 404 and every other method is 405. Nothing is ever
 written. No cookies, no login, no third-party JavaScript.
 
@@ -18,8 +21,8 @@ from panels import DATA_DIR
 
 HOST, PORT = "127.0.0.1", 8765
 ROOT = os.path.dirname(os.path.abspath(__file__))
-PAGE = os.path.join(ROOT, "dashboard.html")
-PANELS = ("routines", "todo", "sync")
+PAGES = {"/": "brain.html", "/index.html": "brain.html", "/panels": "dashboard.html"}
+PANELS = ("routines", "todo", "sync", "brain")
 HEADERS = {
     "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff",
@@ -35,8 +38,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def route(self):
         path = self.path.split("?", 1)[0]
-        if path in ("/", "/index.html"):
-            return PAGE, "text/html; charset=utf-8"
+        if path in PAGES:
+            return os.path.join(ROOT, PAGES[path]), "text/html; charset=utf-8"
         for name in PANELS:
             if path == "/data/%s.json" % name:
                 return os.path.join(DATA_DIR, name + ".json"), "application/json; charset=utf-8"

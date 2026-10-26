@@ -21,6 +21,8 @@ Facts live in the target files, never here.
 - [To-do](F:\Cloude_Code\maps\todo.md): Open items with due dates and who is waiting; the digest reads it.
 
 ## Screen
-- [Dashboard server](F:\Cloude_Code\maps\serve_dashboard.py): Read-only page on http://127.0.0.1:8765, this PC only; serves the page and panel files, nothing else.
-- [Dashboard page](F:\Cloude_Code\maps\dashboard.html): Panels for due and waiting, routines and sync, each with its own timestamp and a stale mark.
+- [Dashboard server](F:\Cloude_Code\maps\serve_dashboard.py): Read-only pages on http://127.0.0.1:8765, this PC only; serves the pages and panel files, nothing else.
+- [Brain view](F:\Cloude_Code\maps\brain.html): The graph of the whole map in six views: rings, circle, areas, links, timeline, 3D orbit.
+- [Brain builder](F:\Cloude_Code\maps\build_brain.py): Walks the signposts after each sync and writes brain.json for the brain view.
+- [Panels page](F:\Cloude_Code\maps\dashboard.html): At /panels; panels for due and waiting, routines and sync, each with its own timestamp and a stale mark.
 - [Panel writer](F:\Cloude_Code\maps\panels.py): The runner and the sync script use it to write panel files to C:\MAPS\screen\data.
